@@ -23,7 +23,7 @@
 import os
 import sys
 from fcntl import ioctl
-from ctypes import c_uint32, c_uint8, c_uint16, c_char, POINTER, Structure, Array, Union, create_string_buffer, string_at
+from ctypes import c_uint32, c_uint8, c_uint16, c_ubyte, POINTER, Structure, Array, Union, string_at
 
 
 # Commands from uapi/linux/i2c-dev.h
@@ -159,7 +159,7 @@ class i2c_msg(Structure):
         ('addr', c_uint16),
         ('flags', c_uint16),
         ('len', c_uint16),
-        ('buf', POINTER(c_char))]
+        ('buf', POINTER(c_ubyte))]
 
     def __iter__(self):
         """ Iterator / Generator
@@ -169,7 +169,7 @@ class i2c_msg(Structure):
         """
         idx = 0
         while idx < self.len:
-            yield ord(self.buf[idx])
+            yield self.buf[idx]
             idx += 1
 
     def __len__(self):
@@ -199,7 +199,7 @@ class i2c_msg(Structure):
         :return: New :py:class:`i2c_msg` instance for read operation.
         :rtype: :py:class:`i2c_msg`
         """
-        arr = create_string_buffer(length)
+        arr = (c_ubyte * length)()
         return i2c_msg(
             addr=address, flags=I2C_M_RD, len=length,
             buf=arr)
@@ -224,7 +224,7 @@ class i2c_msg(Structure):
         else:
             if type(buf) is not str:
                 buf = ''.join([chr(x) for x in buf])
-        arr = create_string_buffer(buf, len(buf))
+        arr = (c_ubyte * len(buf)).from_buffer(bytearray(buf))
         return i2c_msg(
             addr=address, flags=0, len=len(arr),
             buf=arr)

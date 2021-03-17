@@ -251,7 +251,7 @@ class TestI2CMsg(unittest.TestCase):
         k = 0
         s = 0
         for k in range(msg.len):
-            s += ord(msg.buf[k])
+            s += msg.buf[k]
             k += 1
         self.assertEqual(k, 10, msg='Incorrect length')
         self.assertEqual(s, 55, msg='Incorrect sum')
