@@ -49,6 +49,7 @@ I2C_SMBUS_BLOCK_DATA = 5  # This isn't supported by Pure-I2C drivers with SMBUS 
 I2C_SMBUS_BLOCK_PROC_CALL = 7  # Like I2C_SMBUS_BLOCK_DATA, it isn't supported by Pure-I2C drivers either.
 I2C_SMBUS_I2C_BLOCK_DATA = 8
 I2C_SMBUS_BLOCK_MAX = 32 # Linux kernes implementation still only supports SMBus 2.0
+I2C_SMBUS3_BLOCK_MAX = 255 # Max length according to SMBus 3.0+
 
 # To determine what functionality is present (uapi/linux/i2c.h)
 try:
@@ -901,9 +902,11 @@ class SMBusPureOnI2C(SMBus):
         :return: List of bytes
         :rtype: list
         """
+        if length > I2C_SMBUS3_BLOCK_MAX:
+            raise ValueError("Desired data length over %d bytes" % (I2C_SMBUS3_BLOCK_MAX))
         self._set_address(i2c_addr, force=force)
         part_write = i2c_msg.write(self.address, [register])
-        part_read = i2c_msg.read(self.address, I2C_SMBUS_BLOCK_MAX + 1 + (1 if self._pec else 0))
+        part_read = i2c_msg.read(self.address, I2C_SMBUS3_BLOCK_MAX + 1 + (1 if self._pec else 0))
         self.i2c_rdwr(part_write, part_read)
         b = bytes(part_read)
         length = b[0]
@@ -928,8 +931,8 @@ class SMBusPureOnI2C(SMBus):
         :rtype: None
         """
         length = len(data)
-        if length > I2C_SMBUS_BLOCK_MAX:
-            raise ValueError("Data length cannot exceed %d bytes" % I2C_SMBUS_BLOCK_MAX)
+        if length > I2C_SMBUS3_BLOCK_MAX:
+            raise ValueError("Data length cannot exceed %d bytes" % I2C_SMBUS3_BLOCK_MAX)
         self._set_address(i2c_addr, force=force)
         if self._pec:
             part_write = i2c_msg.write(self.address, struct.pack('<BBsB', register, length, data, 0))
@@ -937,5 +940,58 @@ class SMBusPureOnI2C(SMBus):
             part_write = i2c_msg.write(self.address, struct.pack('<BBsB', register, length, data, pec))
         else:
             part_write = i2c_msg.write(self.address, struct.pack('<BBs', register, length, data))
+        self.i2c_rdwr(part_write)
+
+    def read_i2c_block_data(self, i2c_addr, register, length, force=None):
+        """
+        Read list of bytes from a given register, without enforcing block
+        protocol. If this function is used to read block data, the returning
+        buffer will include block length on first byte, and may include PEC
+        at end if it was received and requested length allowed an extra byte.
+        The PEC validity is not verified within this call.
+
+        :param i2c_addr: i2c address
+        :type i2c_addr: int
+        :param register: Start register
+        :type register: int
+        :param length: Desired block length
+        :type length: int
+        :param force:
+        :type force: Boolean
+        :return: List of bytes
+        :rtype: list
+        """
+        if length > I2C_SMBUS3_BLOCK_MAX + 2:
+            raise ValueError("Desired block length over %d bytes" % (I2C_SMBUS3_BLOCK_MAX + 2))
+        self._set_address(i2c_addr, force=force)
+        part_write = i2c_msg.write(self.address, [register])
+        part_read = i2c_msg.read(self.address, I2C_SMBUS3_BLOCK_MAX + 1 + (1 if self._pec else 0))
+        self.i2c_rdwr(part_write, part_read)
+        b = bytes(part_read)
+        return b[0:length]
+
+    def write_i2c_block_data(self, i2c_addr, register, data, force=None):
+        """
+        Write list of bytes to a given register, without enforcing block
+        protocol. If this function is used to write block data, then the data
+        must include length within first byte. If PEC in expected, should also
+        be included in the data, as last byte. The PEC value is not calculated
+        nor verified within this call.
+
+        :param i2c_addr: i2c address
+        :type i2c_addr: int
+        :param register: Start register
+        :type register: int
+        :param data: List of bytes
+        :type data: list
+        :param force:
+        :type force: Boolean
+        :rtype: None
+        """
+        length = len(data)
+        if length > I2C_SMBUS3_BLOCK_MAX + 2:
+            raise ValueError("Block length cannot exceed %d bytes" % (I2C_SMBUS3_BLOCK_MAX + 2))
+        self._set_address(i2c_addr, force=force)
+        part_write = i2c_msg.write(self.address, struct.pack('<Bs', register, data))
         self.i2c_rdwr(part_write)
 
