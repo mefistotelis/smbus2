@@ -708,6 +708,112 @@ class SMBusPureOnI2C(SMBus):
             bus_data += bytes([(msg.addr << 1) + msg.flags]) + bytes(msg)
         return SMBusPureOnI2C.crc8_ccitt_compute(bus_data[:-1])
 
+    def write_quick(self, i2c_addr, force=None):
+        """
+        Perform quick transaction. Throws IOError if unsuccessful.
+        :param i2c_addr: i2c address
+        :type i2c_addr: int
+        :param force:
+        :type force: Boolean
+        """
+        self._set_address(i2c_addr, force=force)
+        if self._pec:
+            part_write = i2c_msg.write(self.address, struct.pack('<BB', 0, 0))
+            pec = self.i2c_compute_pec(part_write)
+            part_write = i2c_msg.write(self.address, struct.pack('<BB', 0, pec))
+        else:
+            part_write = i2c_msg.write(self.address, struct.pack('<B', 0))
+        self.i2c_rdwr(part_write)
+
+    def read_byte(self, i2c_addr, force=None):
+        """
+        Read a single byte from a device.
+
+        :rtype: int
+        :param i2c_addr: i2c address
+        :type i2c_addr: int
+        :param force:
+        :type force: Boolean
+        :return: Read byte value
+        """
+        self._set_address(i2c_addr, force=force)
+        part_write = i2c_msg.write(self.address, [])
+        part_read = i2c_msg.read(self.address, 1 + (1 if self._pec else 0))
+        self.i2c_rdwr(part_write, part_read)
+        b = bytes(part_read)
+        if len(b) > 1:
+            pec = self.i2c_compute_pec(part_write, part_read)
+            if b[1] != pec:
+                raise IOError('PEC checksum failed')
+        return b[0]
+
+    def write_byte(self, i2c_addr, value, force=None):
+        """
+        Write a single byte to a device.
+
+        :param i2c_addr: i2c address
+        :type i2c_addr: int
+        :param value: value to write
+        :type value: int
+        :param force:
+        :type force: Boolean
+        """
+        self._set_address(i2c_addr, force=force)
+        if self._pec:
+            part_write = i2c_msg.write(self.address, struct.pack('<BB', value, 0))
+            pec = self.i2c_compute_pec(part_write)
+            part_write = i2c_msg.write(self.address, struct.pack('<BB', value, pec))
+        else:
+            part_write = i2c_msg.write(self.address, struct.pack('<B', value))
+        self.i2c_rdwr(part_write)
+
+    def read_byte_data(self, i2c_addr, register, force=None):
+        """
+        Read a single byte from a designated register.
+
+        :param i2c_addr: i2c address
+        :type i2c_addr: int
+        :param register: Register to read
+        :type register: int
+        :param force:
+        :type force: Boolean
+        :return: Read byte value
+        :rtype: int
+        """
+        self._set_address(i2c_addr, force=force)
+        part_write = i2c_msg.write(self.address, [register])
+        part_read = i2c_msg.read(self.address, 1 + (1 if self._pec else 0))
+        self.i2c_rdwr(part_write, part_read)
+        b = bytes(part_read)
+        if len(b) > 1:
+            pec = self.i2c_compute_pec(part_write, part_read)
+            if b[1] != pec:
+                raise IOError('PEC checksum failed')
+        return b[0]
+
+    def write_byte_data(self, i2c_addr, register, value, force=None):
+        """
+        Write a byte to a given register.
+
+        :param i2c_addr: i2c address
+        :type i2c_addr: int
+        :param register: Register to write to
+        :type register: int
+        :param value: Byte value to transmit
+        :type value: int
+        :param force:
+        :type force: Boolean
+        :rtype: None
+        """
+        self._set_address(i2c_addr, force=force)
+        if self._pec:
+            part_write = i2c_msg.write(self.address, struct.pack('<BBB', register, value, 0))
+            pec = self.i2c_compute_pec(part_write)
+            part_write = i2c_msg.write(self.address, struct.pack('<BBB', register, value, pec))
+        else:
+            part_write = i2c_msg.write(self.address, struct.pack('<BB', register, value))
+        self.i2c_rdwr(part_write)
+
     def read_word_data(self, i2c_addr, register, force=None):
         """
         Read a single word (2 bytes) from a given register.
@@ -754,5 +860,82 @@ class SMBusPureOnI2C(SMBus):
             part_write = i2c_msg.write(self.address, struct.pack('<BHB', register, value, pec))
         else:
             part_write = i2c_msg.write(self.address, struct.pack('<BH', register, value))
+        self.i2c_rdwr(part_write)
+
+    def process_call(self, i2c_addr, register, value, force=None):
+        """
+        Executes a SMBus Process Call, sending a 16-bit value and receiving a 16-bit response
+
+        :param i2c_addr: i2c address
+        :type i2c_addr: int
+        :param register: Register to read/write to
+        :type register: int
+        :param value: Word value to transmit
+        :type value: int
+        :param force:
+        :type force: Boolean
+        :rtype: int
+        """
+        self._set_address(i2c_addr, force=force)
+        part_write = i2c_msg.write(self.address, struct.pack('<BH', register, value))
+        part_read = i2c_msg.read(self.address, 2 + (1 if self._pec else 0))
+        self.i2c_rdwr(part_write, part_read)
+        b = bytes(part_read)
+        if len(b) > 2:
+            pec = self.i2c_compute_pec(part_write, part_read)
+            if b[2] != pec:
+                raise IOError('PEC checksum failed')
+        (v,) = struct.unpack('<H', b[0:2])
+        return v
+
+    def read_block_data(self, i2c_addr, register, force=None):
+        """
+        Read a block of up to 32-bytes from a given register.
+
+        :param i2c_addr: i2c address
+        :type i2c_addr: int
+        :param register: Start register
+        :type register: int
+        :param force:
+        :type force: Boolean
+        :return: List of bytes
+        :rtype: list
+        """
+        self._set_address(i2c_addr, force=force)
+        part_write = i2c_msg.write(self.address, [register])
+        part_read = i2c_msg.read(self.address, I2C_SMBUS_BLOCK_MAX + 1 + (1 if self._pec else 0))
+        self.i2c_rdwr(part_write, part_read)
+        b = bytes(part_read)
+        length = b[0]
+        if len(b) > length+1:
+            pec = self.i2c_compute_pec(part_write, part_read)
+            if b[length+1] != pec:
+                raise IOError('PEC checksum failed')
+        return b[1:length + 1]
+
+    def write_block_data(self, i2c_addr, register, data, force=None):
+        """
+        Write a block of byte data to a given register.
+
+        :param i2c_addr: i2c address
+        :type i2c_addr: int
+        :param register: Start register
+        :type register: int
+        :param data: List of bytes
+        :type data: list
+        :param force:
+        :type force: Boolean
+        :rtype: None
+        """
+        length = len(data)
+        if length > I2C_SMBUS_BLOCK_MAX:
+            raise ValueError("Data length cannot exceed %d bytes" % I2C_SMBUS_BLOCK_MAX)
+        self._set_address(i2c_addr, force=force)
+        if self._pec:
+            part_write = i2c_msg.write(self.address, struct.pack('<BBsB', register, length, data, 0))
+            pec = self.i2c_compute_pec(part_write)
+            part_write = i2c_msg.write(self.address, struct.pack('<BBsB', register, length, data, pec))
+        else:
+            part_write = i2c_msg.write(self.address, struct.pack('<BBs', register, length, data))
         self.i2c_rdwr(part_write)
 

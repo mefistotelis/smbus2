@@ -35,6 +35,7 @@ from ctypes import create_string_buffer
 # Mock open, close and ioctl so we can run our unit tests anywhere.
 
 # Required I2C constant definitions repeated
+I2C_SLAVE = 0x0703  # Use this slave address
 I2C_FUNCS = 0x0705  # Get the adapter functionality mask
 I2C_RDWR = 0x0707  # Combined R/W transfer (one STOP only)
 I2C_SMBUS = 0x0720
@@ -95,22 +96,41 @@ def mock_ioctl(fd, command, msg):
         if msg.size == I2C_SMBUS_BYTE_DATA:
             msg.data.contents.byte = test_buffer[offset]
         elif msg.size == I2C_SMBUS_WORD_DATA:
-            msg.data.contents.word = test_buffer[offset + 1] * 256 + test_buffer[offset]
+            msg.data.contents.word = test_buffer[offset + 1] * 256 + \
+              test_buffer[offset]
         elif msg.size == I2C_SMBUS_I2C_BLOCK_DATA:
             for k in range(msg.data.contents.byte):
                 msg.data.contents.block[k + 1] = test_buffer[offset + k]
-    if command == I2C_RDWR and msg.nmsgs == 2:
+    elif command == I2C_SMBUS and msg.read_write == I2C_SMBUS_WRITE and \
+            msg.size == I2C_SMBUS_QUICK:
+        # Reproduce a failing Quick write transaction
+        raise IOError("Mocking SMBusPureOnI2C Quick failed")
+    elif command == I2C_RDWR and msg.nmsgs == 1 and msg.msgs[0].len == 1:
+        # I2C_SMBUS_WRITE I2C_SMBUS_QUICK
+        assert msg.msgs[0].flags == 0
+        raise IOError("Mocking SMBusPureOnI2C Quick failed")
+    elif command == I2C_RDWR and msg.nmsgs == 2 and msg.msgs[0].len == 1:
+        # I2C_SMBUS_READ BYTE/WORD/BLOCK
         assert msg.msgs[0].flags == 0
         assert msg.msgs[1].flags == I2C_M_RD
         offset = msg.msgs[0].buf[0]
+        if offset == 213: # arbitrary offset selected for negative tests
+            raise IOError("Mocking SMBusPureOnI2C Block failed")
         for k in range(msg.msgs[1].len):
             msg.msgs[1].buf[k] = test_buffer[offset + k]
-
-    # Reproduce a failing Quick write transaction
-    if command == I2C_SMBUS and \
-            msg.read_write == I2C_SMBUS_WRITE and \
-            msg.size == I2C_SMBUS_QUICK:
-        raise IOError("Mocking SMBusPureOnI2C Quick failed")
+    elif command == I2C_RDWR and msg.nmsgs == 2 and msg.msgs[0].len == 3:
+        # I2C_SMBUS_PROC_CALL
+        assert msg.msgs[0].flags == 0
+        assert msg.msgs[1].flags == I2C_M_RD
+        offset = msg.msgs[0].buf[0]
+        if offset == 213:
+            raise IOError("Mocking SMBusPureOnI2C Proc failed")
+        for k in range(msg.msgs[1].len):
+            msg.msgs[1].buf[k] = test_buffer[offset + k]
+    elif command == I2C_SLAVE:
+        pass
+    else:
+        raise NotImplementedError("Mocking does not include this case")
 
 
 # Override open, close and ioctl with our mock functions
