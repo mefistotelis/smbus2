@@ -22,6 +22,7 @@
 
 import os
 import sys
+import struct
 from fcntl import ioctl
 from ctypes import c_uint32, c_uint8, c_uint16, c_ubyte, POINTER, Structure, Array, Union, string_at
 
@@ -663,3 +664,95 @@ class SMBus(object):
         """
         ioctl_data = i2c_rdwr_ioctl_data.create(*i2c_msgs)
         ioctl(self.fd, I2C_RDWR, ioctl_data)
+
+#############################################################
+
+
+class SMBusPureOnI2C(SMBus):
+
+    @staticmethod
+    def crc8_ccitt_compute(data):
+        """
+        Compute CITT CRC-8 of given data buffer. Uses initial value of 0,
+        as required for PEC byte computation.
+
+        :param data: List of bytes
+        :type data: list
+        :return: CRC-8 value
+        :rtype: int
+        """
+        crc = 0
+        for dt in data:
+            ncrc = crc ^ dt;
+            for i in range(8):
+                if ( ncrc & 0x80 ) != 0:
+                    ncrc <<= 1
+                    ncrc ^= 0x07
+                else:
+                    ncrc <<= 1
+            crc = ncrc & 0xff
+        return crc
+
+    def i2c_compute_pec(self, *i2c_msgs):
+        """
+        Compute PEC checksum for given series of i2c read and write
+        operations, which are to be treated as a single transaction.
+
+        :param i2c_msgs: One or more i2c_msg class instances.
+        :type i2c_msgs: i2c_msg
+        :return: PEC byte value
+        :rtype: int
+        """
+        bus_data = bytearray()
+        for msg in i2c_msgs:
+            bus_data += bytes([(msg.addr << 1) + msg.flags]) + bytes(msg)
+        return SMBusPureOnI2C.crc8_ccitt_compute(bus_data[:-1])
+
+    def read_word_data(self, i2c_addr, register, force=None):
+        """
+        Read a single word (2 bytes) from a given register.
+
+        :param i2c_addr: i2c address
+        :type i2c_addr: int
+        :param register: Register to read
+        :type register: int
+        :param force:
+        :type force: Boolean
+        :return: 2-byte word
+        :rtype: int
+        """
+        self._set_address(i2c_addr, force=force)
+        part_write = i2c_msg.write(self.address, [register])
+        part_read = i2c_msg.read(self.address, 2 + (1 if self._pec else 0))
+        self.i2c_rdwr(part_write, part_read)
+        b = bytes(part_read)
+        if len(b) > 2:
+            pec = self.i2c_compute_pec(part_write, part_read)
+            if b[2] != pec:
+                raise IOError('PEC checksum failed')
+        (v,) = struct.unpack('<H', b[0:2])
+        return v
+
+    def write_word_data(self, i2c_addr, register, value, force=None):
+        """
+        Write a byte to a given register.
+
+        :param i2c_addr: i2c address
+        :type i2c_addr: int
+        :param register: Register to write to
+        :type register: int
+        :param value: Word value to transmit
+        :type value: int
+        :param force:
+        :type force: Boolean
+        :rtype: None
+        """
+        self._set_address(i2c_addr, force=force)
+        if self._pec:
+            part_write = i2c_msg.write(self.address, struct.pack('<BHB', register, value, 0))
+            pec = self.i2c_compute_pec(part_write)
+            part_write = i2c_msg.write(self.address, struct.pack('<BHB', register, value, pec))
+        else:
+            part_write = i2c_msg.write(self.address, struct.pack('<BH', register, value))
+        self.i2c_rdwr(part_write)
+
