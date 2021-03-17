@@ -159,7 +159,7 @@ class TestSMBus(unittest.TestCase):
         # Read word
         x = bus.read_word_data(80, 0)
         res2.append(x & 255)
-        res2.append(x / 256)
+        res2.append(x // 256)
         self.assertEqual(len(res2), 2, msg=INCORRECT_LENGTH_MSG)
         self.assertListEqual(res, res2, msg="Byte and word reads differ")
 
@@ -218,7 +218,7 @@ class TestSMBusWrapper(unittest.TestCase):
         with SMBus(1) as bus:
             x = bus.read_word_data(80, 0)
             res2.append(x & 255)
-            res2.append(x / 256)
+            res2.append(x // 256)
         self.assertEqual(len(res2), 2, msg=INCORRECT_LENGTH_MSG)
         self.assertListEqual(res, res2, msg="Byte and word reads differ")
 
