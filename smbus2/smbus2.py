@@ -47,7 +47,7 @@ I2C_SMBUS_PROC_CALL = 4
 I2C_SMBUS_BLOCK_DATA = 5  # This isn't supported by Pure-I2C drivers with SMBUS emulation, like those in RaspberryPi, OrangePi, etc :(
 I2C_SMBUS_BLOCK_PROC_CALL = 7  # Like I2C_SMBUS_BLOCK_DATA, it isn't supported by Pure-I2C drivers either.
 I2C_SMBUS_I2C_BLOCK_DATA = 8
-I2C_SMBUS_BLOCK_MAX = 32
+I2C_SMBUS_BLOCK_MAX = 32 # Linux kernes implementation still only supports SMBus 2.0
 
 # To determine what functionality is present (uapi/linux/i2c.h)
 try:
@@ -594,7 +594,11 @@ class SMBus(object):
 
     def read_i2c_block_data(self, i2c_addr, register, length, force=None):
         """
-        Read a block of byte data from a given register.
+        Read list of bytes from a given register, without enforcing block
+        protocol. If this function is used to read block data, the returning
+        buffer will include block length on first byte, and may include PEC
+        at end if it was received and requested length allowed an extra byte.
+        The PEC validity is not verified within this call.
 
         :param i2c_addr: i2c address
         :type i2c_addr: int
@@ -607,8 +611,8 @@ class SMBus(object):
         :return: List of bytes
         :rtype: list
         """
-        if length > I2C_SMBUS_BLOCK_MAX:
-            raise ValueError("Desired block length over %d bytes" % I2C_SMBUS_BLOCK_MAX)
+        if length > I2C_SMBUS_BLOCK_MAX + 2:
+            raise ValueError("Desired block length over %d bytes" % (I2C_SMBUS_BLOCK_MAX + 2))
         self._set_address(i2c_addr, force=force)
         msg = i2c_smbus_ioctl_data.create(
             read_write=I2C_SMBUS_READ, command=register, size=I2C_SMBUS_I2C_BLOCK_DATA
@@ -619,7 +623,11 @@ class SMBus(object):
 
     def write_i2c_block_data(self, i2c_addr, register, data, force=None):
         """
-        Write a block of byte data to a given register.
+        Write list of bytes to a given register, without enforcing block
+        protocol. If this function is used to write block data, then the data
+        must include length within first byte. If PEC in expected, should also
+        be included in the data, as last byte. The PEC value is not calculated
+        nor verified within this call.
 
         :param i2c_addr: i2c address
         :type i2c_addr: int
@@ -632,14 +640,13 @@ class SMBus(object):
         :rtype: None
         """
         length = len(data)
-        if length > I2C_SMBUS_BLOCK_MAX:
-            raise ValueError("Data length cannot exceed %d bytes" % I2C_SMBUS_BLOCK_MAX)
+        if length > I2C_SMBUS_BLOCK_MAX + 2:
+            raise ValueError("Data length cannot exceed %d bytes" % (I2C_SMBUS_BLOCK_MAX + 2))
         self._set_address(i2c_addr, force=force)
         msg = i2c_smbus_ioctl_data.create(
             read_write=I2C_SMBUS_WRITE, command=register, size=I2C_SMBUS_I2C_BLOCK_DATA
         )
-        msg.data.contents.block[0] = length
-        msg.data.contents.block[1:length + 1] = data
+        msg.data.contents.block[0:length] = data
         ioctl(self.fd, I2C_SMBUS, msg)
 
     def i2c_rdwr(self, *i2c_msgs):
